@@ -61,6 +61,7 @@ const navigation = {
   teacher: [
     { route: "teacher", label: "教学概览", icon: LayoutDashboard },
     { route: "cases", label: "教学案例", icon: LibraryBig },
+    { route: "courses", label: "课程与课时", icon: BookOpen },
     { route: "prepare", label: "我的教案", icon: FileText },
     { route: "class", label: "班级教学", icon: Users },
   ],
@@ -87,9 +88,10 @@ const active = computed(
 );
 const pageLabel = computed(
   () =>
-    navigation[role.value].find((item) => item.route === active.value)?.label ||
+    (route.name === "source" ? "原文阅读" : navigation[role.value].find((item) => item.route === active.value)?.label) ||
     "学习工作区",
 );
+const pageKey = current => ['manage','content'].includes(current.name) ? current.path : current.fullPath;
 const notice = ref("");
 const mobileOpen = ref(false);
 const searchOpen = ref(false);
@@ -216,7 +218,7 @@ function submitFeedback() {
             <RouterView v-else v-slot="{ Component, route: currentRoute }"
               ><AnimatePresence mode="wait"
                 ><motion.div
-                  :key="currentRoute.fullPath"
+                  :key="pageKey(currentRoute)"
                   class="page-content"
                   :initial="{ opacity: 0, y: 9 }"
                   :animate="{ opacity: 1, y: 0 }"
@@ -225,7 +227,7 @@ function submitFeedback() {
                   ><component
                     :is="Component"
                     :key="
-                      currentRoute.fullPath
+                      pageKey(currentRoute)
                     " /></motion.div></AnimatePresence
             ></RouterView>
           </main>

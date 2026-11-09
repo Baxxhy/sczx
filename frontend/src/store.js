@@ -4,7 +4,6 @@ import {
   createId,
 } from "./services/platform.js";
 import { api } from "./services/api.js";
-import { questions } from "./data.js";
 
 export const useLearning = defineStore("platform", {
   state: () => ({
@@ -54,8 +53,8 @@ export const useLearning = defineStore("platform", {
                 ? 40
                 : 0,
           help: `${record.helps.length} 次帮助`,
-          result: record.attempts.some((item) => item.correct && !item.helped)
-            ? "新题独立完成"
+          result: record.attempts.some((item) => item.correct && !item.helped && this.task.questions[item.question]?.kind!=='practice')
+            ? "独立检查正确"
             : "待独立检查",
         }));
     },
@@ -86,11 +85,11 @@ export const useLearning = defineStore("platform", {
       this.data = createPlatform();
       this.status = "unauthenticated";
     },
-    async load() {
+    async load(lessonId=this.data.lesson?.id) {
       this.status = "loading";
       this.error = "";
       try {
-        this.data = await api.platform();
+        this.data = await api.platform(lessonId);
         this.status = "ready";
       } catch (error) {
         this.error = error.message;
@@ -124,6 +123,13 @@ export const useLearning = defineStore("platform", {
       } finally {
         this.saving = false;
       }
+    },
+    async selectLesson(id) {
+      if (id===this.data.lesson?.id) return true;
+      if (!(await this.save())) throw new Error(this.saveError);
+      await this.load(id);
+      if(this.status==='error') throw new Error(this.error);
+      return true;
     },
     selectTask(id) {
       if (!this.data.tasks.some((task) => task.id === id)) return false;
@@ -166,10 +172,12 @@ export const useLearning = defineStore("platform", {
       await this.load();
       return result;
     },
-    useCase() {
-      const example = this.data.publishedCase || this.data.caseDraft;
+    useCase(selectedCase) {
+      const example = selectedCase || this.data.publishedCase || this.data.caseDraft;
       this.data.lessonDraft.caseId = example.id;
-      this.data.lessonDraft.blocks[0].content = example.content;
+      this.data.lessonDraft.caseSnapshot = example.versionId ? JSON.parse(JSON.stringify(example)) : null;
+      if (this.data.lessonDraft.blocks.length) this.data.lessonDraft.blocks[0].content = example.content;
+      else this.data.lessonDraft.blocks.push({id:createId('activity'),title:example.title,content:example.content});
       this.data.lessonDraft.updatedAt = new Date().toISOString();
       this.touch();
     },
@@ -187,34 +195,24 @@ export const useLearning = defineStore("platform", {
       });
       this.touch();
     },
-    submitAnswer(question, answer, reason, helped) {
+    async refreshRecord() {
+      const recordId = this.record?.id;
+      if (!recordId) return;
+      const fresh = await api.platform();
+      if (this.record?.id !== recordId) return;
+      const record = fresh.studentRecords?.[this.task.id]?.find(item => item.id === recordId);
+      if (record) {
+        this.data.studentRecords[this.task.id] = fresh.studentRecords[this.task.id];
+        this.data.records[this.task.id] = record;
+      }
+    },
+    async submitAnswer(question, answer, reason, helped) {
       if (!this.record || !answer.trim()) throw new Error("请先填写答案。");
-      const item = {
-        id: createId("attempt"),
-        taskId: this.task.id,
-        question,
-        answer: answer.trim(),
-        reason,
-        helped,
-        correct:
-          answer.trim() === (this.task.questions || questions)[question].answer,
-        createdAt: new Date().toISOString(),
-      };
-      this.record.attempts.push(item);
-      if (!item.correct)
-        this.record.wrongQuestions.push({
-          id: createId("wrong"),
-          taskId: this.task.id,
-          attemptId: item.id,
-          prompt: (this.task.questions || questions)[question].equation,
-          answer: item.answer,
-          reason,
-          image: "",
-          repairs: [],
-          createdAt: item.createdAt,
-        });
-      this.touch();
-      return item;
+      const taskId = this.task.id, recordId = this.record.id;
+      if (!(await this.save())) throw new Error(this.saveError);
+      const result = await api.request(`/records/${taskId}/attempts`, { method: "POST", body: JSON.stringify({ question, answer, reason, helped }) });
+      if (this.record?.id === recordId) await this.refreshRecord();
+      return result;
     },
     addWrong(prompt, image) {
       if (!prompt.trim()) throw new Error("请填写题目内容。");
@@ -231,25 +229,14 @@ export const useLearning = defineStore("platform", {
       this.touch();
       return item;
     },
-    submitRepair(wrongId, answer, reason) {
+    async submitRepair(wrongId, answer, reason) {
       if (!answer.trim()) throw new Error("请先填写答案。");
-      const item = {
-        id: createId("repair"),
-        taskId: this.task.id,
-        wrongId,
-        answer,
-        reason,
-        correct: answer.trim() === "7",
-        createdAt: new Date().toISOString(),
-      };
-      this.record.repairs.push(item);
-      const wrong = this.record.wrongQuestions.find((entry) => entry.id === wrongId);
-      if (wrong) {
-        wrong.repairs ||= [];
-        wrong.repairs.push(item);
-      }
-      this.touch();
-      return item;
+      if (!wrongId) throw new Error("请从错题列表选择原题再提交。");
+      const taskId = this.task.id, recordId = this.record.id;
+      if (!(await this.save())) throw new Error(this.saveError);
+      const result = await api.request(`/records/${taskId}/repairs`, { method: "POST", body: JSON.stringify({ wrongId, answer, reason }) });
+      if (this.record?.id === recordId) await this.refreshRecord();
+      return result;
     },
     async submitLesson() {
       if (!this.record || !this.task) throw new Error("没有找到当前学习任务。");

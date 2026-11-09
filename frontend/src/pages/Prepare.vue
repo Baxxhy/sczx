@@ -19,10 +19,21 @@ import {
 import draggable from "vuedraggable";
 import Workspace from "@/components/Workspace.vue";
 import LessonPreview from "@/components/LessonPreview.vue";
-import { initialBlocks } from "@/data.js";
+import CaseArticle from "@/components/CaseArticle.vue";
+import { modelApi } from "@/services/models.js";
+import { curriculumApi } from "@/services/curriculum.js";
+import {useRoute} from "vue-router";
 const store = useLearning(),
   notify = inject("notify");
 
+const route=useRoute();const templateBusy=ref(false);
+watch(()=>route.query.lesson,async id=>{if(id&&id!==store.data.lesson?.id){try{await store.selectLesson(String(id))}catch(e){notify(e.message)}}},{immediate:true});
+async function applyPublished(){if(!confirm('使用当前发布课时替换本教案的目标、活动、题目与引用？学生基础、截止日期和已有任务保留。'))return;templateBusy.value=true;try{const data=await curriculumApi.lesson(store.data.lesson.id);Object.assign(store.data.lessonDraft,{lessonId:store.data.lesson.id,lessonSnapshot:data,goal:data.goal,blocks:structuredClone(data.blocks),questions:structuredClone(data.questions),caseId:data.caseId,caseSnapshot:data.caseSnapshot});store.touch();notify(await store.save()?'已使用发布课时内容':store.saveError)}catch(e){notify(e.message)}finally{templateBusy.value=false}}
+const caseSnapshot = computed(() => store.data.lessonDraft.caseSnapshot);
+const fallbackCase=ref(null),referenceError=ref('');let referenceGeneration=0;
+const caseReference=computed(()=>caseSnapshot.value?.versionId?caseSnapshot.value:fallbackCase.value);
+watch(()=>[store.data.lessonDraft.caseId,caseSnapshot.value?.versionId],async([id,versionId])=>{const generation=++referenceGeneration;fallbackCase.value=null;referenceError.value='';if(!id||versionId)return;try{const item=await modelApi.caseDetail(id);if(generation===referenceGeneration)fallbackCase.value=item}catch(e){if(generation===referenceGeneration)referenceError.value=e.message}},{immediate:true});
+const caseRoute = computed(() => 'case-detail?caseId='+encodeURIComponent(store.data.lessonDraft.caseId||'')+(caseSnapshot.value?.versionId?'&versionId='+encodeURIComponent(caseSnapshot.value.versionId):''));
 const modal = ref(""),
   previewTab = ref("student"),
   busyBlock = ref(""),
@@ -39,15 +50,9 @@ const dialogOpen = computed({
 });
 let timer;
 function regenerate(id) {
-  busyBlock.value = id;
-  timer = setTimeout(() => {
-    store.data.lessonDraft.blocks.find((block) => block.id === id).content =
-      initialBlocks.find((block) => block.id === id).content +
-      " 请先预测，再解释理由。";
-    busyBlock.value = "";
-    store.touch();
-    notify("演示建议已生成");
-  }, 500);
+  const original=store.data.lessonDraft.lessonSnapshot?.blocks?.find(b=>b.id===id);
+  if(!original)return notify('此活动没有对应发布原稿，请直接编辑。');
+  if(confirm('恢复此活动的发布原稿？其他活动保留。')){store.data.lessonDraft.blocks.find(b=>b.id===id).content=original.content;store.touch()}
 }
 onBeforeUnmount(() => clearTimeout(timer));
 function reorderKeyboard(event, index) {
@@ -86,10 +91,10 @@ async function publish() {
   <div class="back-line">
     <Button variant="ghost" @click="navigate('teacher')"
       ><ArrowLeft />返回教学概览</Button
-    ><span>我的教案 / 等式性质</span>
+    ><span>我的教案 / {{ store.data.lesson?.title }}</span>
   </div>
-  <PageHeading title="等式性质 · 备课"
-    ><Button variant="outline" @click="saveDraft"><Save />保存教案</Button
+  <PageHeading :title="(store.data.lesson?.title||'课时')+' · 备课'"
+    ><Button variant="outline" :disabled="templateBusy" @click="applyPublished">使用发布课时</Button><RouteButton route="courses" secondary>选择课时</RouteButton><Button variant="outline" @click="saveDraft"><Save />保存教案</Button
     ><Button variant="outline" @click="modal = 'preview'"
       ><Eye />学生预览</Button
     ><Button @click="modal = 'publish'"
@@ -150,7 +155,7 @@ async function publish() {
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  :aria-label="`重新生成${block.title}`"
+                  :aria-label="`恢复原稿：${block.title}`"
                   :disabled="busyBlock === block.id"
                   @click="regenerate(block.id)"
                   ><WandSparkles
@@ -161,8 +166,8 @@ async function publish() {
                 :aria-label="block.title"
                 :disabled="busyBlock === block.id"
               /></div></template></draggable
-        ><button class="reference-link" @click="navigate('case-detail')">
-          <LibraryBig :size="16" /><span>参考案例 · 天平与等式性质</span
+        ><details class="curriculum-teacher-questions"><summary>编辑题目 · {{ store.data.lessonDraft.questions?.length||0 }}</summary><div v-for="q in store.data.lessonDraft.questions" :key="q.id||q.equation"><label v-for="(label,key) in {prompt:'题干',equation:'方程',answer:'参考答案',hint:'提示'}" :key="key">{{ label }}<Input v-model="q[key]"/></label></div></details><button class="reference-link" @click="navigate(caseRoute)" :disabled="!store.data.lessonDraft.caseId">
+          <LibraryBig :size="16" /><span>参考案例 · {{ caseReference?.title || '尚未选择' }}</span
           ><ArrowUpRight :size="15" />
         </button></div></template
     ><template #secondary
@@ -178,11 +183,9 @@ async function publish() {
       <LessonPreview v-if="previewTab === 'student'" />
       <div v-else class="preview-source">
         <BookOpen :size="28" />
-        <h2>天平与等式性质</h2>
-        <p>
-          先预测，再操作，最后解释。根据学生回应调整讲法，将“同时”和“相同”落实到每一步。
-        </p>
-        <RouteButton route="case-detail" secondary>阅读完整案例</RouteButton>
+        <h2>{{ caseReference?.title || '尚未选择参考案例' }}</h2>
+        <InfoTip v-if="caseReference&&!caseSnapshot?.versionId" label="参考版本说明">此教案尚未记录案例版本，当前展示最新发布内容；使用案例备课后会保存所选版本。</InfoTip><p v-if="referenceError" class="form-error">{{ referenceError }}</p><CaseArticle v-if="caseReference" :value="caseReference" />
+        <RouteButton v-if="store.data.lessonDraft.caseId" :route="caseRoute" secondary>阅读完整案例</RouteButton>
       </div></template
     ></Workspace
   ><AppDialog
@@ -201,7 +204,7 @@ async function publish() {
       <div class="publish-course">
         <FileText :size="22" />
         <div>
-          <strong>等式性质</strong
+          <strong>{{ store.data.lesson?.title }}</strong
           ><small>{{ store.data.lessonDraft.blocks.length }} 个活动</small>
         </div>
       </div>
