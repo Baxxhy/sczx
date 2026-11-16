@@ -11,3 +11,6 @@ backend-business/config/model_pool.json
 .codex/
 .agents/
 .aws/
+
+# Generated Python package metadata
+*.egg-info/

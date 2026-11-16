@@ -1,3 +1,9 @@
+# 当前目录与Git约定（2026-11-16迁移后生效）
+
+项目实体目录为 `/root/Baxxhy/sczx`，与 `/root/Baxxhy/zhiwei` 同级。项目现在是独立Git仓库，`origin` 指向 `git@github.com:Baxxhy/sczx.git`，主分支 `main`。提交仅包含本项目已完成的改动，推送前读取远程并保留历史，使用普通 `git push origin main`；不再对子目录构造提交，不操作父级zhiwei/cuoti仓库。下方历史条款中有关父仓库根目录与sczx remote的描述已被本节替代。
+
+旧地址 `/root/Baxxhy/zhiwei/sczx` 仅为兼容符号链接，保留历史文档绝对路径、旧虚拟环境及尚在运行的旧服务引用，不是第二份项目。数据库与原始上传不复制或清空。迁移时未完成的第四阶段Evaluator代码保持未提交，禁止当作已验收功能提交。
+
 # 项目工作约定
 
 ## 提交与推送
